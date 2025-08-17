@@ -10,5 +10,5 @@ jobs:
       - name: Install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: Lint
-        run: shellcheck smartnode-setup.sh
+        run: shellcheck moonstone.sh
 
