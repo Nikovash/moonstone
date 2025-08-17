@@ -248,7 +248,7 @@ else
   say "No existing configs found."
 fi
 
-REUSE_USER=""; REUSE_USER_NAME=""
+REUSE_USER_NAME=""
 if [[ "$INSTALL_STATE" == "failed" ]]; then
   if confirm "Start over from scratch (remove previous smartnode data/users/services)?"; then
     if (( ${#FOUND_CONFS[@]} > 0 )); then
@@ -267,7 +267,6 @@ if [[ "$INSTALL_STATE" == "failed" ]]; then
           REUSE_USER_NAME=""
         else
           if confirm "Reuse user '$REUSE_USER_NAME' (will clean ~/.bitoreumcore and local binaries)?"; then
-            REUSE_USER="yes"
             su - "$REUSE_USER_NAME" -c 'rm -rf ~/.bitoreumcore' || true
             su - "$REUSE_USER_NAME" -c 'rm -f ~/bin/bitoreum{d,-cli,-tx,-qt} 2>/dev/null || true' || true
           else
@@ -327,13 +326,21 @@ cd "$DATADIR"
 
 if [[ -n "${powcache_url:-}" ]]; then
   say "Downloading powcache.dat..."
-  curl -fSLo powcache.dat "$powcache_url" || warn "Failed to download powcache.dat"
+  if ! curl -fSLo powcache.dat "$powcache_url"; then
+    warn "Failed to download powcache.dat from latest release."
+  fi
 else
   warn "No powcache.dat found in latest release."
   if confirm "Provide a custom powcache.dat URL?"; then
     read -rp "powcache.dat URL: " pcurl
     _log_raw "[ANS ] powcache-url -> ${pcurl:-<empty>}"
-    [[ -n "$pcurl" ]] && curl -fSLo powcache.dat "$pcurl" || warn "Skipped powcache.dat"
+    if [[ -n "$pcurl" ]]; then
+      if ! curl -fSLo powcache.dat "$pcurl"; then
+        warn "Failed to download powcache.dat"
+      fi
+    else
+      warn "Skipped powcache.dat"
+    fi
   else
     warn "Initial sync may take up to ~72 hours without powcache.dat."
   fi
@@ -342,16 +349,24 @@ fi
 BOOT_TMP=""
 if [[ -n "${bootstrap_url:-}" ]]; then
   say "Downloading bootstrap.zip..."
-  curl -fSLo bootstrap.zip "$bootstrap_url" || warn "Failed to download bootstrap.zip"
-  BOOT_TMP="bootstrap.zip"
+  if curl -fSLo bootstrap.zip "$bootstrap_url"; then
+    BOOT_TMP="bootstrap.zip"
+  else
+    warn "Failed to download bootstrap.zip from latest release."
+  fi
 else
   warn "No bootstrap.zip found in latest release."
   if confirm "Provide a custom bootstrap.zip URL?"; then
     read -rp "bootstrap.zip URL: " bcurl
     _log_raw "[ANS ] bootstrap-url -> ${bcurl:-<empty>}"
     if [[ -n "$bcurl" ]]; then
-      curl -fSLo bootstrap.zip "$bcurl" || warn "Failed to download bootstrap.zip"
-      BOOT_TMP="bootstrap.zip"
+      if curl -fSLo bootstrap.zip "$bcurl"; then
+        BOOT_TMP="bootstrap.zip"
+      else
+        warn "Failed to download bootstrap.zip"
+      fi
+    else
+      warn "Skipped bootstrap.zip"
     fi
   else
     warn "Sync without bootstrap may take 30 min to several hours."
@@ -360,7 +375,9 @@ fi
 
 if [[ -f "$BOOT_TMP" ]]; then
   say "Unzipping bootstrap..."
-  unzip -o "$BOOT_TMP" | tee -a "$LOG_FILE" || warn "Unzip failed (continuing)."
+  if ! unzip -o "$BOOT_TMP" | tee -a "$LOG_FILE"; then
+    warn "Unzip failed (continuing)."
+  fi
 fi
 
 # --- Determine IPs (IPv4 only) ---
