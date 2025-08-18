@@ -64,7 +64,7 @@ esac
 say "Updating apt & installing prerequisites..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y | tee -a "$LOG_FILE"
-apt-get install -y dialog nano fail2ban unzip curl jq ca-certificates lsb-release openssl iproute2 | tee -a "$LOG_FILE"
+apt-get install -y dialog nano fail2ban unzip curl jq ca-certificates lsb-release openssl iproute2 htop | tee -a "$LOG_FILE"
 
 # --- Memory & Swap ---
 mem_kb=$(awk '/MemTotal:/ {print $2}' /proc/meminfo || echo 0)

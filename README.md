@@ -50,7 +50,7 @@ installing and configuring a Bitoreum smartnode on (Debian/Ubuntu) Linux systems
 -   Sufficient **RAM/Swap** per the rules above
 -   Ability to run commands as **root** (`sudo` or root shell)
 
-------------------------------------------------------------------------
+---
 
 ### Usage
 
@@ -72,8 +72,27 @@ Run the script **as root**:
 ``` bash
 ./moonstone.sh
 ```
+Once this script has sucessfully isntalled you can start and stop the `bitoreum` daemon with:
+**START**
+```bash
+sudo systemctl start <username>
+```
+**STOP**
+```bash
+sudo systemctl start <username>
+```
 
-------------------------------------------------------------------------
+To add data to a conf file, after successful install we have provided an `update_conf.sh` script that can be used:
+```bash
+./update_conf.sh
+```
+OR
+```bash
+./update_conf.sh <username>
+```
+The first version will cycle through all known installed users, the second one invokes a specific user. This will stop the deamon, ask you questions about the data you want to update empty values are considered `skip`. Once all data has been entered this script attempts to restart the daemon
+ 
+---
 
 ### Firewall Notes
 
@@ -82,7 +101,7 @@ Run the script **as root**:
 -   **Non-Oracle VPS**: The script ensures `ufw` is installed, enables
     it if not, reloads it, and ensures ports `22` and `15168` are open
 
-------------------------------------------------------------------------
+---
 
 ### Logging
 
@@ -99,10 +118,9 @@ If sucessful this script logs the user installed on in:
 cat /opt/moonstone/users
 ```
 
-This will make cleanup easier in the future
+This will make cleanup (uninstall) easier in the future
 
-------------------------------------------------------------------------
-
+---
 ## Disclaimer
 
 This script is provided **as-is**, and without warranty. Use at your own risk! Always back up
