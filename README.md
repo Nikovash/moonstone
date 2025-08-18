@@ -21,7 +21,7 @@ installing and configuring a Bitoreum smartnode on (Debian/Ubuntu) Linux systems
     - 2GB RAM minimum, or
     - 1GB RAM + 2GB swap
     - Auto-creates swap if insufficient, based on thresholds
-    - Ignores if physical RAM is more than 4GB
+    - Ignore creating SWAP if physical RAM is more than 4GB
 -   Detects global installations of **bitoreumd** and **bitoreum-cli**,
     ensures version consistency
 -   Downloads the **latest Bitoreum release** from GitHub, including
@@ -41,7 +41,7 @@ installing and configuring a Bitoreum smartnode on (Debian/Ubuntu) Linux systems
 -   Creates and enables a **systemd service** to keep the node alive
 -   Logs successes, info, and failures to `moonstone.log`
 -	Update non-critcal conf data `update_conf.sh`
--	Uninstall capable
+-	Uninstall `uninstall.sh` script included
 
 
 ---
@@ -74,7 +74,7 @@ Run the script **as root**:
 ``` bash
 ./moonstone.sh
 ```
-Once this script has sucessfully isntalled you can start and stop the `bitoreum` daemon with:
+Once this script has sucessfully installed you can start and stop the `bitoreum` daemon with:
 **START**
 ```bash
 sudo systemctl start <username>
@@ -93,6 +93,13 @@ OR
 ./update_conf.sh <username>
 ```
 The first version will cycle through all known installed users, the second one invokes a specific user. This will stop the deamon, ask you questions about the data you want to update empty values are considered `skip`. Once all data has been entered this script attempts to restart the daemon
+<p><p>
+We now ship an unistaller script that requires an explicit username to execute because of the destructive nature of this action:
+```bash
+./uninstall.sh <username>
+```
+The <username> must match one in the installed list. the `bitoreum.conf` file for that user is stored in /opt/moonstone/backups<username>-bitoreum.conf to be recoverable in the future if you wish to reuse the data such as voting address, `bls` keys, etc.
+ 
  
 ---
 
