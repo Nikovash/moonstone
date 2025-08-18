@@ -1,0 +1,5 @@
+logs/
+*.log
+*.zip
+powcache.dat
+.DS_Store
