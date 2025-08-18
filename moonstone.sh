@@ -1,23 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# ====================================
-# Moonstone - Bitoreum Smartnode Setup Tool
-# ====================================
-# - Linux-only (exits on macOS/Windows)
-# - Must run as root (re-execs with sudo if possible)
-# - Installs: dialog nano fail2ban unzip curl jq ca-certificates lsb-release openssl iproute2
-# - Swap: skip if RAM >= 4GB; else one /swapfile as needed
-# - Detects Oracle/Ampere + Raspberry Pi (Pi4+), selects matching tarball
-# - Bootstrap: ALWAYS from https://bitoreum.cc/depends/bootstrap.zip (IPv4)
-# - powcache.dat from latest GitHub release
-# - Reuse from prior conf: rpcport, smartnodePublicKey, smartnodeblsprivkey
-# - Firewall: iptables-persistent on Oracle; UFW elsewhere
-# - Fail2Ban: sshd with maxretry=3
-# - Creates systemd service <username>.service
-# - Logs username to /opt/moonstone/users
-# - Verbose logging to ./logs/
-# ====================================
+# ===========================================
+# Moonstone - Bitoreum Smartnode Setup Tool =
+# ===========================================
 
 # --- Logging ---
 RUN_DIR="$(pwd -P)"
@@ -156,10 +142,51 @@ if [[ -r /proc/device-tree/model ]]; then
 fi
 say "Hardware hints: Ampere=${is_ampere} Pi=${is_pi} Pi4plus=${is_pi4} (${pi_model:-unknown})"
 
-# --- Oracle flag ---
-is_oracle=false
-if confirm "Is this an Oracle VPS instance?"; then is_oracle=true; fi
-say "Oracle mode: $is_oracle"
+# --- Oracle flag (auto-detect) ---
+has_cmd(){ command -v "$1" >/dev/null 2>&1; }
+
+detect_oracle() {
+  local hits=0 v
+
+# --- DMI strings ---
+  for f in /sys/class/dmi/id/sys_vendor /sys/class/dmi/id/product_name /sys/class/dmi/id/board_vendor /sys/class/dmi/id/bios_vendor; do
+    if [[ -r "$f" ]]; then
+      v="$(tr -d '\0' <"$f" | tr '[:upper:]' '[:lower:]')"
+      if grep -qE 'oracle|oci|oracle cloud' <<<"$v"; then
+        ((hits++))
+        break
+      fi
+    fi
+  done
+
+# --- cloud-init datasource ---
+  if [[ -r /var/lib/cloud/instance/datasource ]]; then
+    v="$(tr -d '\0' </var/lib/cloud/instance/datasource | tr '[:upper:]' '[:lower:]')"
+    if grep -qE 'oracle|oci' <<<"$v"; then
+      ((hits++))
+    fi
+  fi
+
+# --- Oracle Cloud Agent package
+  if dpkg -l 2>/dev/null | awk '{print $2}' | grep -q '^oracle-cloud-agent$'; then
+    ((hits++))
+  fi
+
+# --- OCI metadata service ---
+  if has_cmd curl && curl -4 -m 1 -sS --noproxy '*' http://169.254.169.254/opc/v1/ >/dev/null; then
+    ((hits++))
+  fi
+
+  [[ $hits -ge 2 ]]
+}
+
+# --- Final Oracle mode flag --- 
+if detect_oracle; then
+  is_oracle=true
+else
+  is_oracle=false
+fi
+say "Oracle mode (auto-detected): $is_oracle"
 
 # --- Fail2Ban ---
 say "Configuring Fail2Ban for SSH..."

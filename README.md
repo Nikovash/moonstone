@@ -6,32 +6,33 @@
 ## The Crystal Bitoreum Smartnode Setup Script
 
 This project provides a **single bash script** (`moonstone.sh`) for
-installing and configuring a Bitoreum smartnode on Linux systems.
+installing and configuring a Bitoreum smartnode on (Debian/Ubuntu) Linux systems.
 
-------------------------------------------------------------------------
+---
 
 ### Features
 
 -   Ensures the script only runs on **Linux** (exits if run on macOS or
     Windows)
--   Confirms the **Bitoreum daemon is stopped** before continuing
--   Installs required packages: `dialog`, `nano`, `fail2ban`, `unzip`,
+-   ask user if **Bitoreum daemon is stopped** before continuing
+-   Installs required packages: `dialog`, `nano`, `fail2ban`, `unzip`, `curl`, `jq`, `ca-certificates`, `lsb-release`, `openssl`, `iproute2`
     and conditionally `ufw`
 -   Verifies minimum **RAM and swap requirements**:
-    -   2GB RAM minimum, or
-    -   1GB RAM + 2GB swap
-    -   Auto-creates swap if insufficient, based on thresholds
+    - 2GB RAM minimum, or
+    - 1GB RAM + 2GB swap
+    - Auto-creates swap if insufficient, based on thresholds
+    - Ignores if physical RAM is more than 4GB
 -   Detects global installations of **bitoreumd** and **bitoreum-cli**,
     ensures version consistency
 -   Downloads the **latest Bitoreum release** from GitHub, including
     optional `powcache.dat` and `bootstrap.zip` if available
 -   Handles **Oracle Cloud VPS** instances specially:
-    -   Modifies `/etc/iptables/rules.v4` to allow ports `22` and
+    - Modifies `/etc/iptables/rules.v4` to allow ports `22` and
         `15168`
 -   For non-Oracle systems:
-    -   Ensures **ufw** is installed
-    -   Opens ports `22` and `15168`
-    -   Reloads firewall rules
+    - Ensures **ufw** is installed
+    - Opens ports `22` and `15168`
+    - Reloads firewall rules
 -   Allows recovery from failed smartnode installations by cleaning up
     old users/configs
 -   Creates a dedicated non-sudo **smartnode user**
@@ -39,8 +40,9 @@ installing and configuring a Bitoreum smartnode on Linux systems.
     user-provided keys and collateral details
 -   Creates and enables a **systemd service** to keep the node alive
 -   Logs successes, info, and failures to `moonstone.log`
+-	Tracks username for clean unistall
 
-------------------------------------------------------------------------
+---
 
 ### Requirements
 
@@ -55,8 +57,8 @@ installing and configuring a Bitoreum smartnode on Linux systems.
 Clone the repository:
 
 ``` bash
-git clone https://github.com/YOUR_USERNAME/moonstone-smartnode.git
-cd moonstone-smartnode
+git clone https://github.com/YOUR_USERNAME/moonstone
+cd moonstone
 ```
 
 Make the script executable: (optional script is shipped executable)
@@ -68,7 +70,7 @@ chmod +x moonstone.sh
 Run the script **as root**:
 
 ``` bash
-sudo ./moonstone.sh
+./moonstone.sh
 ```
 
 ------------------------------------------------------------------------
@@ -90,7 +92,14 @@ The script logs all activity to:
 moonstone.log
 ```
 
-This file records successes, failures, and informational messages.
+This file records successes, failures, and informational messages
+
+If sucessful this script logs the user installed on in:
+```bash
+cat /opt/moonstone/users
+```
+
+This will make cleanup easier in the future
 
 ------------------------------------------------------------------------
 
