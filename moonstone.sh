@@ -426,25 +426,30 @@ else
 fi
 
 # --- Bootstrap chain data (IPv4, unzip into $DATADIR) ---
-BOOTSTRAP_URL="https://bitoreum.cc/depends/bootstrap.zip"
+BOOTSTRAP_URL="https://bitoreum.cc/bootstrap/bootstrap.zip"
 BOOTSTRAP_TMP="/tmp/bootstrap.zip"
 
-say "Fetching bootstrap.zip from ${BOOTSTRAP_URL} ..."
-mkdir -p "$DATADIR"
+say "Bootstrap option: download pre-synced chain data into ${DATADIR}."
+if confirm "Download and extract bootstrap.zip now?"; then
+  say "Fetching bootstrap.zip from ${BOOTSTRAP_URL} ..."
+  mkdir -p "$DATADIR"
 
-if curl -4 -L --fail --progress-bar "$BOOTSTRAP_URL" -o "$BOOTSTRAP_TMP"; then
-  say "Bootstrap archive downloaded to $BOOTSTRAP_TMP"
-  (
-    cd "$DATADIR"
-    if unzip -o "$BOOTSTRAP_TMP" | tee -a "$LOG_FILE"; then
-      say "Bootstrap extracted into $DATADIR."
-    else
-      warn "Unzip reported an issue; continuing without bootstrap."
-    fi
-  )
-  rm -f "$BOOTSTRAP_TMP"
+  if curl -4 -L --fail --progress-bar "$BOOTSTRAP_URL" -o "$BOOTSTRAP_TMP"; then
+    say "Bootstrap archive downloaded to $BOOTSTRAP_TMP"
+    (
+      cd "$DATADIR"
+      if unzip -o "$BOOTSTRAP_TMP" | tee -a "$LOG_FILE"; then
+        say "Bootstrap extracted into $DATADIR."
+      else
+        warn "Unzip reported an issue; continuing without bootstrap."
+      fi
+    )
+    rm -f "$BOOTSTRAP_TMP"
+  else
+    warn "Failed to download bootstrap.zip from $BOOTSTRAP_URL (IPv4). Skipping bootstrap."
+  fi
 else
-  warn "Failed to download bootstrap.zip from $BOOTSTRAP_URL (IPv4). Skipping bootstrap."
+  warn "User declined bootstrap download; initial sync may take longer."
 fi
 
 # --- Determine IPs (IPv4 only) ---

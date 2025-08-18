@@ -9,7 +9,7 @@ set -Eeuo pipefail
 # - If arg (username): uses it directly
 # - Stops <username>.service if running, edits conf, restarts if it was running
 # - Backs up conf with timestamp
-# - Lets you SET/KEEP/COMMENT keys in bitoreum.conf
+# - Prompts store values as COMMENTED placeholders (#Key=value) only
 # ====================================
 
 err(){ echo "[ERROR] $*" >&2; exit 1; }
@@ -32,37 +32,50 @@ confirm(){ # confirm "question"
   [[ "${_ans,,}" == "y" || "${_ans,,}" == "yes" ]]
 }
 
+# Read value from either commented or uncommented line; return value part only
 parse_conf_val(){ # parse_conf_val <file> <KeyName>
   local file="$1" key="$2"
-  awk -F'=' -v k="$key" '
-    $0 !~ /^[[:space:]]*#/ && $1==k {
-      val=$2; sub(/^[[:space:]]+/,"",val); sub(/[[:space:]]+$/,"",val);
-      print val; exit
-    }' "$file" 2>/dev/null || true
+  local re="^[[:space:]]*#?[[:space:]]*${key}[[:space:]]*="
+  local line
+  line="$(grep -E -m1 "$re" "$file" 2>/dev/null || true)"
+  if [[ -n "$line" ]]; then
+    line="${line#*=}"                       # drop up to '='
+    # trim leading/trailing whitespace
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    printf '%s\n' "$line"
+  fi
 }
 
+# Always write the key as a COMMENTED placeholder (#Key=value). Never uncomment.
 set_or_comment_key(){ # set_or_comment_key <file> <KeyName> <value|"#">
   local file="$1" key="$2" val="${3:-}"
-  local esc_key
-  esc_key="$(printf '%s\n' "$key" | sed 's/[.[\*^$()+?{}|]/\\&/g')"
-
+  local esc_key safe_val
+  esc_key="$(printf '%s' "$key" | sed 's/[.[\*^$()+?{}|]/\\&/g')"
   if [[ "$val" == "#" ]]; then
-# --- comment out line (ensure a single commented placeholder) ---
-    if grep -Eq "^[[:space:]]*${esc_key}[[:space:]]*=" "$file"; then
-      sed -i "s|^[[:space:]]*${esc_key}[[:space:]]*=.*|#${key}=|g" "$file"
-    elif ! grep -Eq "^[[:space:]]*#${esc_key}[[:space:]]*=" "$file"; then
-      echo "#${key}=" >> "$file"
-    fi
+    safe_val=""
   else
-# --- set or append ---
-    if grep -Eq "^[[:space:]]*${esc_key}[[:space:]]*=" "$file"; then
-      sed -i "s|^[[:space:]]*${esc_key}[[:space:]]*=.*|${key}=${val}|g" "$file"
-    elif grep -Eq "^[[:space:]]*#${esc_key}[[:space:]]*=" "$file"; then
-      sed -i "s|^[[:space:]]*#${esc_key}[[:space:]]*=.*|${key}=${val}|g" "$file"
-    else
-      echo "${key}=${val}" >> "$file"
-    fi
+    # escape sed-sensitive chars in value
+    safe_val="$(printf '%s' "$val" | sed -e 's/[&\\/]/\\&/g')"
   fi
+
+  if grep -Eq "^[[:space:]]*#?[[:space:]]*${esc_key}[[:space:]]*=" "$file"; then
+    sed -i -E "s|^[[:space:]]*#?[[:space:]]*${esc_key}[[:space:]]*=.*|#${key}=${safe_val}|g" "$file"
+  else
+    echo "#${key}=${safe_val}" >> "$file"
+  fi
+}
+
+# If any of these keys appear uncommented, re-comment them (preserving value)
+normalize_comment_keys(){ # normalize_comment_keys <file> <keys...>
+  local file="$1"; shift
+  local k v
+  for k in "$@"; do
+    if grep -Eq "^[[:space:]]*${k}[[:space:]]*=" "$file"; then
+      v="$(parse_conf_val "$file" "$k" || true)"
+      set_or_comment_key "$file" "$k" "$v"
+    fi
+  done
 }
 
 prompt_key(){ # prompt_key <file> <KeyName> <label> <allow_empty_keep:true|false>
@@ -74,9 +87,9 @@ prompt_key(){ # prompt_key <file> <KeyName> <label> <allow_empty_keep:true|false
   else
     say "$label (currently commented or empty)"
   fi
-  echo " - Enter a new value to SET"
+  echo " - Enter a new value to STORE as '#$key=<value>'"
   echo " - Press Enter to KEEP current"
-  echo " - Type a single # to COMMENT it out"
+  echo " - Type a single # to CLEAR the stored value (keeps '#$key=')"
   read -rp "> $key: " new
 
   if [[ -z "$new" ]]; then
@@ -88,10 +101,10 @@ prompt_key(){ # prompt_key <file> <KeyName> <label> <allow_empty_keep:true|false
 
   if [[ "$new" == "#" ]]; then
     set_or_comment_key "$file" "$key" "#"
-    say "Commented $key."
+    say "Cleared $key (left commented placeholder)."
   else
     set_or_comment_key "$file" "$key" "$new"
-    say "Set $key."
+    say "Updated $key (commented placeholder)."
   fi
 }
 
@@ -119,7 +132,7 @@ main(){
     TARGET_USER="$(pick_user_from_list)"
   fi
 
-# --- Validate user exists on system ---
+  # Validate user exists on system
   id "$TARGET_USER" >/dev/null 2>&1 || err "User '$TARGET_USER' does not exist on this system."
 
   local USER_HOME DATADIR CONF
@@ -139,25 +152,33 @@ main(){
     say "Service $SERVICE_NAME is not active."
   fi
 
-# --- Backup ---
+  # Backup
   local TS; TS="$(date +%Y%m%d-%H%M%S)"
   local BACKUP="${CONF}.bak.${TS}"
   cp -a "$CONF" "$BACKUP"
   say "Backup saved: $BACKUP"
 
-# --- Edit keys ---
+  # Ensure the target keys are commented placeholders before prompting
+  normalize_comment_keys "$CONF" \
+    CollateralHash \
+    ProTXHash \
+    smartnodePublicKey \
+    OwnerAddress \
+    VotingAddress
+
+  # Edit keys
   echo
   say "=== Editing $CONF ==="
-  prompt_key "$CONF" "CollateralHash"           "Set CollateralHash (TXID)" true
-  prompt_key "$CONF" "ProTXHash"                "Set ProTXHash (if known)"  true
-  prompt_key "$CONF" "smartnodePublicKey"       "Set smartnodePublicKey (BLS pub)" true
-  prompt_key "$CONF" "OwnerAddress"             "Set OwnerAddress"          true
-  prompt_key "$CONF" "VotingAddress"            "Set VotingAddress"         true
+  prompt_key "$CONF" "CollateralHash"     "Set CollateralHash (TXID)"        true
+  prompt_key "$CONF" "ProTXHash"          "Set ProTXHash (if known)"         true
+  prompt_key "$CONF" "smartnodePublicKey" "Set smartnodePublicKey (BLS pub)" true
+  prompt_key "$CONF" "OwnerAddress"       "Set OwnerAddress"                 true
+  prompt_key "$CONF" "VotingAddress"      "Set VotingAddress"                true
 
-# --- Ensure permissions ---
+  # Ensure permissions
   chown -R "${TARGET_USER}:${TARGET_USER}" "$DATADIR"
 
-# --- Restart if it was active ---
+  # Restart if it was active
   if [[ "$was_active" == true ]]; then
     say "Restarting $SERVICE_NAME..."
     systemctl start "$SERVICE_NAME"
