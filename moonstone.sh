@@ -2,17 +2,19 @@
 set -Eeuo pipefail
 
 # ====================================
-# Bitoreum Smartnode Setup - moonstone
+# - Moonstone - Bitoreum Smartnode Setup Tool 
 # - Linux only (exits on macOS/Windows)
 # - Enforces daemon stopped
 # - Installs dialog nano fail2ban unzip curl jq openssl iproute2
-# - RAM/swap policy (single /swapfile)
+# - RAM/swap policy (single /swapfile; skip if >=4GB RAM)
 # - Finds latest release (bootstrap.zip, powcache.dat)
+# - Downloads matching Linux binary tarball for device (Oracle/Pi special rules)
 # - Handles prior failed attempts, user reuse/delete
 # - Oracle network nuance + firewall handling
 # - Non-Oracle UFW handling (22, 15168) with reload/enable
 # - Builds bitoreum.conf (BLS PRIVKEY REQUIRED)
 # - Creates systemd service <username>.service
+# - Logs successful usernames to /opt/moonstone/users
 # - Robust local logging to ./logs/
 # ====================================
 
@@ -90,48 +92,53 @@ swap_mb=$(( swap_kb / 1024 ))
 
 say "Detected RAM: ${mem_mb} MB, Swap: ${swap_mb} MB"
 
-meets_minimum=false
-if (( mem_mb >= 2048 )); then
-  meets_minimum=true
-elif (( mem_mb >= 1024 )) && (( swap_mb >= 2048 )); then
-  meets_minimum=true
-fi
-
-if [[ "$meets_minimum" == false ]]; then
-  if (( mem_mb < 700 )); then
-    err "Minimum resources not met (need >=700MB RAM at least). Aborting."
-    exit 1
-  fi
-  target_swap_mb=2048
-  if (( mem_mb >= 700 && mem_mb < 1000 )); then
-    target_swap_mb=3072
-  fi
-
-  say "Configuring a single swapfile at /swapfile of size ${target_swap_mb} MB (removing any existing swap entries)."
-  swapoff -a || true
-  if grep -Eq '^[^#].*\s+swap\s+' /etc/fstab; then
-    cp -a /etc/fstab "/etc/fstab.bak.$(date +%s)"
-    sed -ri '/\s+swap\s+/d' /etc/fstab
-  fi
-
-  blocks=$(( target_swap_mb * 1024 )) # 1k blocks
-  bash -c "
-    set -Eeuo pipefail
-    dd if=/dev/zero of=/swapfile bs=1k count=${blocks} status=progress
-    chmod 600 /swapfile
-    mkswap /swapfile
-    swapon /swapfile
-    echo '/swapfile swap swap auto 0 0' | tee -a /etc/fstab >/dev/null
-    sysctl -w vm.swappiness=10
-    if ! grep -q '^vm.swappiness' /etc/sysctl.conf 2>/dev/null; then
-      echo 'vm.swappiness = 10' | tee -a /etc/sysctl.conf >/dev/null
-    else
-      sed -ri 's/^vm\.swappiness.*/vm.swappiness = 10/' /etc/sysctl.conf
-    fi
-  " | tee -a "$LOG_FILE"
-  say "Swap configured."
+# If >= 4096 MB RAM, skip swap entirely
+if (( mem_mb >= 4096 )); then
+  say ">= 4GB RAM detected; skipping swap configuration."
 else
-  say "Memory requirements already satisfied."
+  meets_minimum=false
+  if (( mem_mb >= 2048 )); then
+    meets_minimum=true
+  elif (( mem_mb >= 1024 )) && (( swap_mb >= 2048 )); then
+    meets_minimum=true
+  fi
+
+  if [[ "$meets_minimum" == false ]]; then
+    if (( mem_mb < 700 )); then
+      err "Minimum resources not met (need >=700MB RAM at least). Aborting."
+      exit 1
+    fi
+    target_swap_mb=2048
+    if (( mem_mb >= 700 && mem_mb < 1000 )); then
+      target_swap_mb=3072
+    fi
+
+    say "Configuring a single swapfile at /swapfile of size ${target_swap_mb} MB (removing any existing swap entries)."
+    swapoff -a || true
+    if grep -Eq '^[^#].*\s+swap\s+' /etc/fstab; then
+      cp -a /etc/fstab "/etc/fstab.bak.$(date +%s)"
+      sed -ri '/\s+swap\s+/d' /etc/fstab
+    fi
+
+    blocks=$(( target_swap_mb * 1024 )) # 1k blocks
+    bash -c "
+      set -Eeuo pipefail
+      dd if=/dev/zero of=/swapfile bs=1k count=${blocks} status=progress
+      chmod 600 /swapfile
+      mkswap /swapfile
+      swapon /swapfile
+      echo '/swapfile swap swap auto 0 0' | tee -a /etc/fstab >/dev/null
+      sysctl -w vm.swappiness=10
+      if ! grep -q '^vm.swappiness' /etc/sysctl.conf 2>/dev/null; then
+        echo 'vm.swappiness = 10' | tee -a /etc/sysctl.conf >/dev/null
+      else
+        sed -ri 's/^vm\.swappiness.*/vm.swappiness = 10/' /etc/sysctl.conf
+      fi
+    " | tee -a "$LOG_FILE"
+    say "Swap configured."
+  else
+    say "Memory requirements already satisfied."
+  fi
 fi
 
 # --- Versions & architecture ---
@@ -156,12 +163,43 @@ case "$machine" in
 esac
 say "Architecture: ${ARCH_FAMILY} (${ARCH_LABEL}, ${ARCH_BITS}-bit)"
 
-# --- Oracle VPS special handling flag ---
+# --- Hardware detection (Ampere / Raspberry Pi) ---
+is_ampere=false
+if lscpu 2>/dev/null | grep -qiE 'ampere|neoverse-?n1'; then is_ampere=true; fi
+
+is_pi=false; is_pi4=false; pi_model=""
+if [[ -r /proc/device-tree/model ]]; then
+  pi_model="$(tr -d '\0' </proc/device-tree/model)"
+  if echo "$pi_model" | grep -qi 'raspberry pi'; then
+    is_pi=true
+    if echo "$pi_model" | grep -Eq 'Raspberry Pi [4-9]'; then is_pi4=true; fi
+  fi
+fi
+say "Hardware hints: Ampere=${is_ampere} Pi=${is_pi} Pi4plus=${is_pi4} (${pi_model:-unknown})"
+
+# --- Oracle VPS special handling flag (ask user; generic ARM_64 otherwise) ---
 is_oracle=false
 if confirm "Is this an Oracle VPS instance?"; then
   is_oracle=true
 fi
 say "Oracle mode: $is_oracle"
+
+# --- Fail2Ban Setup ---
+say "Configuring Fail2Ban for SSH (maxretry=3)..."
+if [[ -f /etc/fail2ban/jail.local ]]; then
+  cp -a /etc/fail2ban/jail.local "/etc/fail2ban/jail.local.bak.$(date +%s)"
+fi
+cat > /etc/fail2ban/jail.local <<'JAIL'
+[sshd]
+enabled = true
+port = 22
+filter = sshd
+logpath = /var/log/auth.log
+maxretry = 3
+JAIL
+systemctl restart fail2ban
+systemctl enable fail2ban >/dev/null 2>&1 || true
+say "Fail2Ban is configured and is now being enforced"
 
 # --- Firewall setup ---
 if [[ "$is_oracle" == true ]]; then
@@ -216,8 +254,8 @@ LATEST_JSON="$(curl -fsSL https://api.github.com/repos/Nikovash/bitoreum/release
 LATEST_TAG="$(jq -r '.tag_name // empty' <<<"$LATEST_JSON" || true)"
 ASSETS_JSON="$(jq -r '.assets // []' <<<"$LATEST_JSON" || echo '[]')"
 
-bootstrap_url="$(jq -r '.[] | select(.name|test("bootstrap\\.zip$")) | .browser_download_url' <<<"$ASSETS_JSON" | head -n1 || true)"
-powcache_url="$(jq -r '.[] | select(.name|test("powcache\\.dat$")) | .browser_download_url' <<<"$ASSETS_JSON" | head -n1 || true)"
+bootstrap_url="$(jq -r '.[] | select(.name|test("bootstrap\\.zip$";"i")) | .browser_download_url' <<<"$ASSETS_JSON" | head -n1 || true)"
+powcache_url="$(jq -r '.[] | select(.name|test("powcache\\.dat$";"i")) | .browser_download_url' <<<"$ASSETS_JSON" | head -n1 || true)"
 
 say "Latest tag: ${LATEST_TAG:-<unknown>}"
 say "bootstrap.zip: ${bootstrap_url:-<not found>}"
@@ -230,6 +268,86 @@ if [[ -n "$LATEST_TAG" && -n "$bitd_ver" && -n "$bitcli_ver" ]]; then
   fi
 fi
 [[ "$mismatch" == true ]] && warn "Installed versions differ from latest (${LATEST_TAG:-unknown}) or from each other."
+
+# --- Arch-aware binary download (exact naming) ---
+say "Selecting Linux binary asset for this hardware (tag ${LATEST_TAG})..."
+TAG_RE="$(sed -E 's/[][(){}.^$|?+*\\/]/\\&/g' <<<"${LATEST_TAG:-}")"
+
+pick_asset_url() {
+  local rx="$1"
+  jq -r --arg rx "$rx" '.[] | select(.name|test($rx; "i")) | .browser_download_url' <<<"$ASSETS_JSON" | head -n1
+}
+
+# Raspberry Pi < 4 forces ARM_32 target
+force_arm32=false
+if [[ "$is_pi" == true && "$is_pi4" == false ]]; then
+  warn "Raspberry Pi model < 4 detected — forcing ARM_32 build; this may be unstable."
+  force_arm32=true
+fi
+
+BINARY_URL=""
+if [[ "$force_arm32" == true ]]; then
+  BINARY_URL="$(pick_asset_url "^bitoreum-Generic-Linux_ARM_32-${TAG_RE}\\.tar\\.gz$")"
+else
+  case "$ARCH_LABEL" in
+    aarch64)
+      # Oracle Ampere preferred if CPU Ampere or user confirmed Oracle mode
+      if [[ "$is_ampere" == true || "$is_oracle" == true ]]; then
+        BINARY_URL="$(pick_asset_url "^bitoreum-ubuntu-[0-9.]+_Oracle-Ampere_ARM_64-${TAG_RE}\\.tar\\.gz$")"
+      fi
+      # Pi4+ special
+      if [[ -z "$BINARY_URL" && "$is_pi4" == true ]]; then
+        BINARY_URL="$(pick_asset_url "^bitoreum-ubuntu-[0-9.]+_Pi4_ARM_64-${TAG_RE}\\.tar\\.gz$")"
+      fi
+      # Generic ARM_64
+      if [[ -z "$BINARY_URL" ]]; then
+        BINARY_URL="$(pick_asset_url "^bitoreum-Generic-Linux_ARM_64-${TAG_RE}\\.tar\\.gz$")"
+      fi
+      ;;
+    armhf)
+      BINARY_URL="$(pick_asset_url "^bitoreum-Generic-Linux_ARM_32-${TAG_RE}\\.tar\\.gz$")"
+      ;;
+    x86_64)
+      BINARY_URL="$(pick_asset_url "^bitoreum-Generic-Linux_x86_64-${TAG_RE}\\.tar\\.gz$")"
+      ;;
+    i686)
+      BINARY_URL="$(pick_asset_url "^bitoreum-Generic-Linux_x86_32-${TAG_RE}\\.tar\\.gz$")"
+      ;;
+    *)
+      # best-effort generic Linux tarball (any Linux tar)
+      BINARY_URL="$(pick_asset_url "^(bitoreum-Generic-Linux_.*-${TAG_RE}|.*linux.*${TAG_RE}).*\\.tar\\.gz$")"
+      ;;
+  esac
+fi
+
+if [[ -n "${BINARY_URL:-}" && "${BINARY_URL}" != "null" ]]; then
+  say "Downloading binary tarball: ${BINARY_URL}"
+  TMPD="$(mktemp -d)"; trap 'rm -rf "$TMPD" || true' EXIT
+  ARCHIVE_PATH="$TMPD/bitoreum.tar.gz"
+  if curl -fSLo "$ARCHIVE_PATH" "$BINARY_URL"; then
+    mkdir -p "$TMPD/extract"
+    tar -xzf "$ARCHIVE_PATH" -C "$TMPD/extract"
+    install_bin () {
+      local n="$1" p
+      p="$(find "$TMPD/extract" -type f -name "$n" -perm -111 | head -n1 || true)"
+      if [[ -n "$p" ]]; then
+        say "Installing $n -> /usr/bin/$n"
+        install -m 0755 "$p" "/usr/bin/$n"
+      else
+        warn "$n not found in archive"
+      fi
+    }
+    install_bin bitoreumd
+    install_bin bitoreum-cli
+    install_bin bitoreum-tx
+    hash -r || true
+    say "Binary install complete."
+  else
+    warn "Failed downloading/expanding binary tarball; continuing."
+  fi
+else
+  warn "No matching Linux binary asset found for this hardware."
+fi
 
 # --- Prior attempt detection & cleanup path ---
 say "Have you (a) successfully installed a smartnode already, or (b) tried and failed?"
@@ -257,7 +375,10 @@ if [[ "$INSTALL_STATE" == "failed" ]]; then
     ask "Enter previous username to reuse (or press Enter to skip): " REUSE_USER_NAME || true
     REUSE_USER_NAME="${REUSE_USER_NAME:-}"
     if [[ -n "$REUSE_USER_NAME" ]]; then
-      if id "$REUSE_USER_NAME" >/dev/null 2>&1; then
+      if [[ "$REUSE_USER_NAME" == "root" ]]; then
+        err "Refusing to reuse 'root' as a runtime user."
+        REUSE_USER_NAME=""
+      elif id "$REUSE_USER_NAME" >/dev/null 2>&1; then
         if confirm "Delete user '$REUSE_USER_NAME' entirely (REMOVES HOME)?"; then
           systemctl stop "${REUSE_USER_NAME}.service" 2>/dev/null || true
           systemctl disable "${REUSE_USER_NAME}.service" 2>/dev/null || true
@@ -294,13 +415,19 @@ if [[ "$INSTALL_STATE" == "failed" ]]; then
   fi
 fi
 
-# --- Choose / Create runtime user ---
+# --- Choose / Create runtime user (NEVER root) ---
 TARGET_USER=""
 if [[ -n "$REUSE_USER_NAME" ]]; then
   TARGET_USER="$REUSE_USER_NAME"
 else
-  read -rp "Enter username to run the smartnode under: " TARGET_USER
-  _log_raw "[ANS ] target-user -> $TARGET_USER"
+  while true; do
+    read -rp "Enter username to run the smartnode under (non-root): " TARGET_USER
+    _log_raw "[ANS ] target-user -> $TARGET_USER"
+    if [[ -z "$TARGET_USER" ]]; then warn "Empty username."; continue; fi
+    if [[ "$TARGET_USER" == "root" ]]; then err "Username cannot be 'root'."; continue; fi
+    break
+  done
+
   if ! id "$TARGET_USER" >/dev/null 2>&1; then
     say "Creating user '$TARGET_USER' (non-sudo)..."
     while true; do
@@ -321,7 +448,7 @@ DATADIR="${USER_HOME}/.bitoreumcore"
 mkdir -p "$DATADIR"
 touch "${DATADIR}/debug.log"
 
-# --- Download powcache.dat & bootstrap.zip (or prompt) ---
+# --- Download powcache.dat & bootstrap.zip (with fallbacks) ---
 cd "$DATADIR"
 
 if [[ -n "${powcache_url:-}" ]]; then
@@ -347,29 +474,48 @@ else
 fi
 
 BOOT_TMP=""
+try_bootstrap_fallback () {
+  local url
+  for url in \
+    "https://bitoreum.cc/depends/bootstrap.zip" \
+    "https://bitoruem.cc/depends/bootstrap.zip"
+  do
+    say "Attempting fallback bootstrap from $url ..."
+    if curl -fSLo bootstrap.zip "$url"; then
+      BOOT_TMP="bootstrap.zip"
+      return 0
+    fi
+  done
+  return 1
+}
+
 if [[ -n "${bootstrap_url:-}" ]]; then
   say "Downloading bootstrap.zip..."
   if curl -fSLo bootstrap.zip "$bootstrap_url"; then
     BOOT_TMP="bootstrap.zip"
   else
     warn "Failed to download bootstrap.zip from latest release."
+    try_bootstrap_fallback || true
   fi
 else
   warn "No bootstrap.zip found in latest release."
-  if confirm "Provide a custom bootstrap.zip URL?"; then
-    read -rp "bootstrap.zip URL: " bcurl
-    _log_raw "[ANS ] bootstrap-url -> ${bcurl:-<empty>}"
-    if [[ -n "$bcurl" ]]; then
-      if curl -fSLo bootstrap.zip "$bcurl"; then
-        BOOT_TMP="bootstrap.zip"
+  try_bootstrap_fallback || true
+  if [[ -z "$BOOT_TMP" ]]; then
+    if confirm "Provide a custom bootstrap.zip URL?"; then
+      read -rp "bootstrap.zip URL: " bcurl
+      _log_raw "[ANS ] bootstrap-url -> ${bcurl:-<empty>}"
+      if [[ -n "$bcurl" ]]; then
+        if curl -fSLo bootstrap.zip "$bcurl"; then
+          BOOT_TMP="bootstrap.zip"
+        else
+          warn "Failed to download bootstrap.zip"
+        fi
       else
-        warn "Failed to download bootstrap.zip"
+        warn "Skipped bootstrap.zip"
       fi
     else
-      warn "Skipped bootstrap.zip"
+      warn "Sync without bootstrap may take 30 min to several hours."
     fi
-  else
-    warn "Sync without bootstrap may take 30 min to several hours."
   fi
 fi
 
@@ -503,6 +649,12 @@ systemctl daemon-reload
 systemctl enable "${SERVICE_NAME}" | tee -a "$LOG_FILE"
 if systemctl start "${SERVICE_NAME}"; then
   say "Service started."
+  # Log username for future multi-node/uninstall tracking
+  mkdir -p /opt/moonstone
+  touch /opt/moonstone/users
+  if ! grep -Fxq "$TARGET_USER" /opt/moonstone/users 2>/dev/null; then
+    echo "$TARGET_USER" >> /opt/moonstone/users
+  fi
 else
   err "Failed to start service. Check ${DATADIR}/debug.log and 'journalctl -u ${SERVICE_NAME}'."
   exit 1
