@@ -7,7 +7,7 @@
 <h3 align="center">The Crystal Bitoreum Smartnode Setup Script</h3>
 
 This project provides the main **bash script** (`moonstone.sh`) for installing and configuring a Bitoreum smartnode on Debian/Ubuntu Linux systems.  
-It also includes tools to **update** non-critical config values (`update_conf.sh`) and to **uninstall** a node cleanly (`uninstall.sh`).
+It also includes tools to **update** non-critical config values (`update_conf.sh`), tools to **update** the ip(s) (`update_ip.sh`), and to **uninstall** a node cleanly (`uninstall.sh`).
 
 ---
 
@@ -139,6 +139,20 @@ After a successful install, the username is also recorded in:
 ```
 
 This makes future maintenance (e.g., uninstall) easier
+
+---
+
+### Determine Best Binary
+
+For those of you who do not wish to do things manually we even have a tool for you `rock_grind.sh` checks your current system and determines the best binary for you based on facts about your system and checks them against the current release.
+```bash
+./rock_grind.sh
+```
+OR
+```bash
+./rock_grind.sh -n 5
+```
+Should give you the top three best guesses
 
 ---
 
