@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 # ====================================
-# - Moonstone - Bitoreum Smartnode Setup Tool 
+# - Moonstone - Bitoreum Smartnode Setup Tool
 # - Linux only (exits on macOS/Windows)
 # - Enforces daemon stopped
 # - Installs dialog nano fail2ban unzip curl jq openssl iproute2
@@ -92,7 +92,7 @@ swap_mb=$(( swap_kb / 1024 ))
 
 say "Detected RAM: ${mem_mb} MB, Swap: ${swap_mb} MB"
 
-# If >= 4096 MB RAM, skip swap entirely
+# Skip swap if >= 4GB RAM
 if (( mem_mb >= 4096 )); then
   say ">= 4GB RAM detected; skipping swap configuration."
 else
@@ -155,13 +155,13 @@ say "  bitoreum-cli: ${bitcli_ver:-<not found>}"
 
 machine=$(uname -m)
 case "$machine" in
-  x86_64) ARCH_FAMILY="x86_64"; ARCH_BITS=64; ARCH_LABEL="x86_64" ;;
-  i386|i686) ARCH_FAMILY="x86";  ARCH_BITS=32; ARCH_LABEL="i686"   ;;
-  aarch64|arm64) ARCH_FAMILY="ARM"; ARCH_BITS=64; ARCH_LABEL="aarch64" ;;
-  armv7l|armv6l|armv7) ARCH_FAMILY="ARM"; ARCH_BITS=32; ARCH_LABEL="armhf" ;;
-  *) ARCH_FAMILY="$machine"; ARCH_BITS=0; ARCH_LABEL="$machine" ;;
+  x86_64) ARCH_FAMILY="x86_64"; ARCH_bits=64; ARCH_LABEL="x86_64" ;;
+  i386|i686) ARCH_FAMILY="x86";  ARCH_bits=32; ARCH_LABEL="i686"   ;;
+  aarch64|arm64) ARCH_FAMILY="ARM"; ARCH_bits=64; ARCH_LABEL="aarch64" ;;
+  armv7l|armv6l|armv7) ARCH_FAMILY="ARM"; ARCH_bits=32; ARCH_LABEL="armhf" ;;
+  *) ARCH_FAMILY="$machine"; ARCH_bits=0; ARCH_LABEL="$machine" ;;
 esac
-say "Architecture: ${ARCH_FAMILY} (${ARCH_LABEL}, ${ARCH_BITS}-bit)"
+say "Architecture: ${ARCH_FAMILY} (${ARCH_LABEL}, ${ARCH_bits}-bit)"
 
 # --- Hardware detection (Ampere / Raspberry Pi) ---
 is_ampere=false
@@ -177,7 +177,7 @@ if [[ -r /proc/device-tree/model ]]; then
 fi
 say "Hardware hints: Ampere=${is_ampere} Pi=${is_pi} Pi4plus=${is_pi4} (${pi_model:-unknown})"
 
-# --- Oracle VPS special handling flag (ask user; generic ARM_64 otherwise) ---
+# --- Oracle VPS special handling flag ---
 is_oracle=false
 if confirm "Is this an Oracle VPS instance?"; then
   is_oracle=true
@@ -199,7 +199,7 @@ maxretry = 3
 JAIL
 systemctl restart fail2ban
 systemctl enable fail2ban >/dev/null 2>&1 || true
-say "Fail2Ban is configured and is now being enforced"
+say "Fail2Ban is configured and restarted."
 
 # --- Firewall setup ---
 if [[ "$is_oracle" == true ]]; then
@@ -269,7 +269,7 @@ if [[ -n "$LATEST_TAG" && -n "$bitd_ver" && -n "$bitcli_ver" ]]; then
 fi
 [[ "$mismatch" == true ]] && warn "Installed versions differ from latest (${LATEST_TAG:-unknown}) or from each other."
 
-# --- Arch-aware binary download (exact naming) ---
+# --- Arch-aware binary download (exact naming + install to /usr/bin) ---
 say "Selecting Linux binary asset for this hardware (tag ${LATEST_TAG})..."
 TAG_RE="$(sed -E 's/[][(){}.^$|?+*\\/]/\\&/g' <<<"${LATEST_TAG:-}")"
 
@@ -295,7 +295,7 @@ else
       if [[ "$is_ampere" == true || "$is_oracle" == true ]]; then
         BINARY_URL="$(pick_asset_url "^bitoreum-ubuntu-[0-9.]+_Oracle-Ampere_ARM_64-${TAG_RE}\\.tar\\.gz$")"
       fi
-      # Pi4+ special
+      # Pi4+ special tarball
       if [[ -z "$BINARY_URL" && "$is_pi4" == true ]]; then
         BINARY_URL="$(pick_asset_url "^bitoreum-ubuntu-[0-9.]+_Pi4_ARM_64-${TAG_RE}\\.tar\\.gz$")"
       fi
@@ -308,46 +308,53 @@ else
       BINARY_URL="$(pick_asset_url "^bitoreum-Generic-Linux_ARM_32-${TAG_RE}\\.tar\\.gz$")"
       ;;
     x86_64)
-      BINARY_URL="$(pick_asset_url "^bitoreum-Generic-Linux_x86_64-${TAG_RE}\\.tar\\.gz$")"
+      # Accept either x86_64 or 64bit variants
+      BINARY_URL="$(pick_asset_url "^bitoreum-Generic-Linux_(x86_64|64bit)-${TAG_RE}\\.tar\\.gz$")"
       ;;
-    i686)
-      BINARY_URL="$(pick_asset_url "^bitoreum-Generic-Linux_x86_32-${TAG_RE}\\.tar\\.gz$")"
+    i686|i386)
+      BINARY_URL="$(pick_asset_url "^bitoreum-Generic-Linux_(x86_32|32bit)-${TAG_RE}\\.tar\\.gz$")"
       ;;
     *)
-      # best-effort generic Linux tarball (any Linux tar)
-      BINARY_URL="$(pick_asset_url "^(bitoreum-Generic-Linux_.*-${TAG_RE}|.*linux.*${TAG_RE}).*\\.tar\\.gz$")"
+      BINARY_URL="$(pick_asset_url "linux.*${TAG_RE}.*\\.tar\\.gz$")"
       ;;
   esac
 fi
 
-if [[ -n "${BINARY_URL:-}" && "${BINARY_URL}" != "null" ]]; then
-  say "Downloading binary tarball: ${BINARY_URL}"
-  TMPD="$(mktemp -d)"; trap 'rm -rf "$TMPD" || true' EXIT
-  ARCHIVE_PATH="$TMPD/bitoreum.tar.gz"
-  if curl -fSLo "$ARCHIVE_PATH" "$BINARY_URL"; then
-    mkdir -p "$TMPD/extract"
-    tar -xzf "$ARCHIVE_PATH" -C "$TMPD/extract"
-    install_bin () {
-      local n="$1" p
-      p="$(find "$TMPD/extract" -type f -name "$n" -perm -111 | head -n1 || true)"
-      if [[ -n "$p" ]]; then
-        say "Installing $n -> /usr/bin/$n"
-        install -m 0755 "$p" "/usr/bin/$n"
-      else
-        warn "$n not found in archive"
-      fi
-    }
-    install_bin bitoreumd
-    install_bin bitoreum-cli
-    install_bin bitoreum-tx
-    hash -r || true
-    say "Binary install complete."
-  else
-    warn "Failed downloading/expanding binary tarball; continuing."
-  fi
-else
-  warn "No matching Linux binary asset found for this hardware."
+if [[ -z "${BINARY_URL:-}" || "${BINARY_URL}" == "null" ]]; then
+  err "No matching Linux binary asset found for this hardware/tag. You may need to install from source."
 fi
+
+say "Downloading binary tarball: ${BINARY_URL}"
+TMPD="$(mktemp -d)"; trap 'rm -rf "$TMPD" || true' EXIT
+ARCHIVE_PATH="$TMPD/bitoreum.tar.gz"
+if ! curl -fSLo "$ARCHIVE_PATH" "$BINARY_URL"; then
+  err "Failed to download the Bitoreum binary tarball."
+fi
+
+say "Extracting tarball..."
+mkdir -p "$TMPD/extract"
+tar -xzf "$ARCHIVE_PATH" -C "$TMPD/extract"
+
+# Find the executables regardless of internal folder structure
+find_and_install () {
+  local bin_name="$1"
+  local found
+  found="$(find "$TMPD/extract" -type f -name "$bin_name" -perm -111 | head -n1 || true)"
+  if [[ -z "$found" ]]; then
+    err "Executable $bin_name not found inside the archive."
+  fi
+  say "Installing $bin_name -> /usr/bin/$bin_name"
+  install -m 0755 -T "$found" "/usr/bin/$bin_name"
+}
+
+find_and_install "bitoreumd"
+find_and_install "bitoreum-cli"
+hash -r || true
+
+# Basic sanity check
+if ! command -v bitoreumd >/dev/null 2>&1; then err "bitoreumd not found on PATH after install."; fi
+if ! command -v bitoreum-cli >/dev/null 2>&1; then err "bitoreum-cli not found on PATH after install."; fi
+say "Binary install complete."
 
 # --- Prior attempt detection & cleanup path ---
 say "Have you (a) successfully installed a smartnode already, or (b) tried and failed?"
@@ -478,6 +485,7 @@ try_bootstrap_fallback () {
   local url
   for url in \
     "https://bitoreum.cc/depends/bootstrap.zip" \
+    "https://www.bitoreum.cc/depends/bootstrap.zip" \
     "https://bitoruem.cc/depends/bootstrap.zip"
   do
     say "Attempting fallback bootstrap from $url ..."
