@@ -378,7 +378,7 @@ USER_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
 DATADIR="${USER_HOME}/.bitoreumcore"
 CONF_PATH="${DATADIR}/bitoreum.conf"
 mkdir -p "$DATADIR"
-touch "${DATADIR}/debug.log"
+: > "${DATADIR}/debug.log"
 
 # --- powcache.dat download (IPv4) ---
 cd "$DATADIR"
@@ -398,17 +398,26 @@ else
   fi
 fi
 
-# --- Bootstrap (ALWAYS from bitoreum.cc via IPv4) ---
-say "Fetching bootstrap.zip from bitoreum.cc/depends ..."
+# --- Bootstrap chain data (IPv4, unzip into $DATADIR) ---
 BOOTSTRAP_URL="https://bitoreum.cc/depends/bootstrap.zip"
 BOOTSTRAP_TMP="/tmp/bootstrap.zip"
+
+say "Fetching bootstrap.zip from ${BOOTSTRAP_URL} ..."
+mkdir -p "$DATADIR"
+
 if curl -4 -L --fail --progress-bar "$BOOTSTRAP_URL" -o "$BOOTSTRAP_TMP"; then
-  say "Bootstrap archive downloaded."
-  unzip -o "$BOOTSTRAP_TMP" -d "$DATADIR" | tee -a "$LOG_FILE"
+  say "Bootstrap archive downloaded to $BOOTSTRAP_TMP"
+  (
+    cd "$DATADIR"
+    if unzip -o "$BOOTSTRAP_TMP" | tee -a "$LOG_FILE"; then
+      say "Bootstrap extracted into $DATADIR."
+    else
+      warn "Unzip reported an issue; continuing without bootstrap."
+    fi
+  )
   rm -f "$BOOTSTRAP_TMP"
-  say "Bootstrap extracted into $DATADIR."
 else
-  warn "Failed to download bootstrap.zip from $BOOTSTRAP_URL. Continuing without bootstrap."
+  warn "Failed to download bootstrap.zip from $BOOTSTRAP_URL (IPv4). Skipping bootstrap."
 fi
 
 # --- Determine IPs (IPv4 only) ---
@@ -519,6 +528,10 @@ User=${TARGET_USER}
 RuntimeDirectory=bitoreum
 RuntimeDirectoryMode=0750
 Restart=on-failure
+
+# Truncate debug.log on each start
+ExecStartPre=/bin/sh -c ': > /home/${TARGET_USER}/.bitoreumcore/debug.log'
+
 ExecStart=/usr/bin/bitoreumd \\
    -datadir=${DATADIR} \\
    -conf=${CONF_PATH} \\
