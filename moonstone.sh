@@ -147,7 +147,6 @@ has_cmd(){ command -v "$1" >/dev/null 2>&1; }
 
 detect_oracle() {
   local hits=0 v
-
 # --- DMI strings ---
   for f in /sys/class/dmi/id/sys_vendor /sys/class/dmi/id/product_name /sys/class/dmi/id/board_vendor /sys/class/dmi/id/bios_vendor; do
     if [[ -r "$f" ]]; then
@@ -158,29 +157,19 @@ detect_oracle() {
       fi
     fi
   done
-
 # --- cloud-init datasource ---
   if [[ -r /var/lib/cloud/instance/datasource ]]; then
     v="$(tr -d '\0' </var/lib/cloud/instance/datasource | tr '[:upper:]' '[:lower:]')"
-    if grep -qE 'oracle|oci' <<<"$v"; then
-      ((hits++))
-    fi
+    if grep -qE 'oracle|oci' <<<"$v"; then ((hits++)); fi
   fi
-
-# --- Oracle Cloud Agent package
-  if dpkg -l 2>/dev/null | awk '{print $2}' | grep -q '^oracle-cloud-agent$'; then
-    ((hits++))
-  fi
-
-# --- OCI metadata service ---
-  if has_cmd curl && curl -4 -m 1 -sS --noproxy '*' http://169.254.169.254/opc/v1/ >/dev/null; then
-    ((hits++))
-  fi
-
+# --- Oracle Cloud Agent package ---
+  if dpkg -l 2>/dev/null | awk '{print $2}' | grep -q '^oracle-cloud-agent$'; then ((hits++)); fi
+  # OCI metadata service
+  if has_cmd curl && curl -4 -m 1 -sS --noproxy '*' http://169.254.169.254/opc/v1/ >/dev/null; then ((hits++)); fi
   [[ $hits -ge 2 ]]
 }
 
-# --- Final Oracle mode flag --- 
+# --- Final Oracle mode flag ---
 if detect_oracle; then
   is_oracle=true
 else
@@ -240,80 +229,94 @@ say "Latest tag: ${LATEST_TAG:-<unknown>}"
 powcache_url="$(jq -r '.[] | select(.name|test("powcache\\.dat$";"i")) | .browser_download_url' <<<"$ASSETS_JSON" | head -n1 || true)"
 say "powcache.dat: ${powcache_url:-<not found>}"
 
-say "Available release assets:"
-jq -r '.[].name' <<<"$ASSETS_JSON" | sed 's/^/  - /' | tee -a "$LOG_FILE"
-
-# --- Binary tarball selection (flexible regex, tag not required in filename) ---
-say "Selecting Linux binary tarball for this hardware..."
-lower_arch_token(){
-  case "$1" in
-    aarch64) echo '(aarch64|arm[_-]?64)';;
-    armhf)   echo '(armhf|arm[_-]?32|armv7|arm32)';;
-    x86_64)  echo '(x86[_-]?64|amd64|64bit)';;
-    i686)    echo '(x86[_-]?32|i[3-6]86|32bit)';;
-    *)       echo '(linux)';;
-  esac
-}
-ARCH_TOKEN="$(lower_arch_token "$ARCH_LABEL")"
-
-force_arm32=false
-if [[ "$is_pi" == true && "$is_pi4" == false ]]; then
-  warn "Raspberry Pi < 4 detected — forcing ARM_32 build; may be unstable."
-  force_arm32=true
-  ARCH_TOKEN='(armhf|arm[_-]?32|armv7|arm32)'
-fi
-
-declare -a REGEXES=()
-if [[ "$ARCH_LABEL" == "aarch64" && ( "$is_ampere" == true || "$is_oracle" == true ) && "$force_arm32" == false ]]; then
-  REGEXES+=("^.*(linux|ubuntu).*(oracle|ampere).*(arm[_-]?64|aarch64).*\\.tar\\.gz$")
-fi
-if [[ "$ARCH_LABEL" == "aarch64" && "$is_pi4" == true && "$force_arm32" == false ]]; then
-  REGEXES+=("^.*(linux|ubuntu).*(pi4).*?(arm[_-]?64|aarch64).*\\.tar\\.gz$")
-fi
-REGEXES+=("^.*(linux|ubuntu).*$ARCH_TOKEN.*\\.tar\\.gz$")
-REGEXES+=("^.*linux.*\\.tar\\.gz$")
-
-pick_asset(){
-  local rx="$1"
-  jq -r --arg rx "$rx" '.[] | select(.name|test($rx; "i")) | .browser_download_url' <<<"$ASSETS_JSON" | head -n1
-}
-BINARY_URL=""
-for rx in "${REGEXES[@]}"; do
-  BINARY_URL="$(pick_asset "$rx")"
-  if [[ -n "$BINARY_URL" && "$BINARY_URL" != "null" ]]; then
-    say "Matched asset with regex: $rx"
-    break
+# --- Decide if we actually need to download binaries ---
+NEED_BIN_DL=true
+if [[ -n "$LATEST_TAG" ]]; then
+  if [[ -n "$bitd_ver" && -n "$bitcli_ver" ]] \
+     && grep -q "$LATEST_TAG" <<<"$bitd_ver" \
+     && grep -q "$LATEST_TAG" <<<"$bitcli_ver"; then
+    say "Installed binaries already match latest ($LATEST_TAG); skipping binary download."
+    NEED_BIN_DL=false
   fi
-done
-if [[ -z "${BINARY_URL:-}" || "${BINARY_URL}" == "null" ]]; then
-  err "No matching Linux tarball found in latest release assets."
 fi
 
-# --- Download & install binaries to /usr/bin ---
-say "Downloading binary tarball: $BINARY_URL"
-TMPD="$(mktemp -d)"; trap 'rm -rf "$TMPD" || true' EXIT
-ARCHIVE_PATH="$TMPD/bitoreum.tar.gz"
-if ! curl -4 -L --fail --progress-bar "$BINARY_URL" -o "$ARCHIVE_PATH"; then
-  err "Failed to download the Bitoreum tarball."
-fi
-say "Extracting tarball..."
-mkdir -p "$TMPD/extract"
-tar -xzf "$ARCHIVE_PATH" -C "$TMPD/extract"
+# --- Binary tarball selection + install (only if needed) ---
+if [[ "$NEED_BIN_DL" == true ]]; then
+  say "Available release assets:"
+  jq -r '.[].name' <<<"$ASSETS_JSON" | sed 's/^/  - /' | tee -a "$LOG_FILE"
 
-find_and_install(){
-  local bin="$1"
-  local p
-  p="$(find "$TMPD/extract" -type f -name "$bin" -perm -111 | head -n1 || true)"
-  [[ -z "$p" ]] && err "Executable $bin not found in archive."
-  say "Installing $bin -> /usr/bin/$bin"
-  install -m 0755 -T "$p" "/usr/bin/$bin"
-}
-find_and_install bitoreumd
-find_and_install bitoreum-cli
-hash -r || true
-command -v bitoreumd >/dev/null 2>&1 || err "bitoreumd not on PATH after install."
-command -v bitoreum-cli >/dev/null 2>&1 || err "bitoreum-cli not on PATH after install."
-say "Binary install complete."
+  say "Selecting Linux binary tarball for this hardware..."
+  lower_arch_token(){
+    case "$1" in
+      aarch64) echo '(aarch64|arm[_-]?64)';;
+      armhf)   echo '(armhf|arm[_-]?32|armv7|arm32)';;
+      x86_64)  echo '(x86[_-]?64|amd64|64bit)';;
+      i686)    echo '(x86[_-]?32|i[3-6]86|32bit)';;
+      *)       echo '(linux)';;
+    esac
+  }
+  ARCH_TOKEN="$(lower_arch_token "$ARCH_LABEL")"
+
+  force_arm32=false
+  if [[ "$is_pi" == true && "$is_pi4" == false ]]; then
+    warn "Raspberry Pi < 4 detected — forcing ARM_32 build; may be unstable."
+    force_arm32=true
+    ARCH_TOKEN='(armhf|arm[_-]?32|armv7|arm32)'
+  fi
+
+  declare -a REGEXES=()
+  if [[ "$ARCH_LABEL" == "aarch64" && ( "$is_ampere" == true || "$is_oracle" == true ) && "$force_arm32" == false ]]; then
+    REGEXES+=("^.*(linux|ubuntu).*(oracle|ampere).*(arm[_-]?64|aarch64).*\\.tar\\.gz$")
+  fi
+  if [[ "$ARCH_LABEL" == "aarch64" && "$is_pi4" == true && "$force_arm32" == false ]]; then
+    REGEXES+=("^.*(linux|ubuntu).*(pi4).*?(arm[_-]?64|aarch64).*\\.tar\\.gz$")
+  fi
+  REGEXES+=("^.*(linux|ubuntu).*$ARCH_TOKEN.*\\.tar\\.gz$")
+  REGEXES+=("^.*linux.*\\.tar\\.gz$")
+
+  pick_asset(){
+    local rx="$1"
+    jq -r --arg rx "$rx" '.[] | select(.name|test($rx; "i")) | .browser_download_url' <<<"$ASSETS_JSON" | head -n1
+  }
+  BINARY_URL=""
+  for rx in "${REGEXES[@]}"; do
+    BINARY_URL="$(pick_asset "$rx")"
+    if [[ -n "$BINARY_URL" && "$BINARY_URL" != "null" ]]; then
+      say "Matched asset with regex: $rx"
+      break
+    fi
+  done
+  if [[ -z "${BINARY_URL:-}" || "${BINARY_URL}" == "null" ]]; then
+    err "No matching Linux tarball found in latest release assets."
+  fi
+
+  say "Downloading binary tarball: $BINARY_URL"
+  TMPD="$(mktemp -d)"; trap 'rm -rf "$TMPD" || true' EXIT
+  ARCHIVE_PATH="$TMPD/bitoreum.tar.gz"
+  if ! curl -4 -L --fail --progress-bar "$BINARY_URL" -o "$ARCHIVE_PATH"; then
+    err "Failed to download the Bitoreum tarball."
+  fi
+  say "Extracting tarball..."
+  mkdir -p "$TMPD/extract"
+  tar -xzf "$ARCHIVE_PATH" -C "$TMPD/extract"
+
+  find_and_install(){
+    local bin="$1"
+    local p
+    p="$(find "$TMPD/extract" -type f -name "$bin" -perm -111 | head -n1 || true)"
+    [[ -z "$p" ]] && err "Executable $bin not found in archive."
+    say "Installing $bin -> /usr/bin/$bin"
+    install -m 0755 -T "$p" "/usr/bin/$bin"
+  }
+  find_and_install bitoreumd
+  find_and_install bitoreum-cli
+  hash -r || true
+  command -v bitoreumd >/dev/null 2>&1 || err "bitoreumd not on PATH after install."
+  command -v bitoreum-cli >/dev/null 2>&1 || err "bitoreum-cli not on PATH after install."
+  say "Binary install complete."
+else
+  say "Keeping existing /usr/bin/bitoreumd and /usr/bin/bitoreum-cli."
+fi
 
 # --- Prior attempt detection & cleanup path ---
 say "Have you (a) successfully installed a smartnode already, or (b) tried and failed?"
@@ -433,7 +436,6 @@ say "Bootstrap option: download pre-synced chain data into ${DATADIR}."
 if confirm "Download and extract bootstrap.zip now?"; then
   say "Fetching bootstrap.zip from ${BOOTSTRAP_URL} ..."
   mkdir -p "$DATADIR"
-
   if curl -4 -L --fail --progress-bar "$BOOTSTRAP_URL" -o "$BOOTSTRAP_TMP"; then
     say "Bootstrap archive downloaded to $BOOTSTRAP_TMP"
     (
@@ -465,7 +467,7 @@ fi
 [[ -z "$PRIVATE_IP"  ]] && read -rp "Enter private IPv4: " PRIVATE_IP
 [[ -z "$EXTERNAL_IP" ]] && read -rp "Enter external/ephemeral IPv4 (you may include :port): " EXTERNAL_IP
 
-# Ensure externalip includes :15168 unless a port is already present
+# --- Ensure externalip includes :15168 ---
 ANNOUNCE_PORT=15168
 EXTERNAL_IP="${EXTERNAL_IP//[[:space:]]/}"           # strip whitespace
 if [[ -n "$EXTERNAL_IP" && "$EXTERNAL_IP" != *:* ]]; then
@@ -473,9 +475,7 @@ if [[ -n "$EXTERNAL_IP" && "$EXTERNAL_IP" != *:* ]]; then
 else
   EXTERNAL_ANNOUNCE="$EXTERNAL_IP"                   # already has :port (or empty)
 fi
-
 _log "[IP  ] private=$PRIVATE_IP external=$EXTERNAL_ANNOUNCE"
-
 
 # --- Reuse values from existing conf if present ---
 FOUND_RPCPORT=""; FOUND_BLS_PUB=""; FOUND_BLS_PRIV=""
