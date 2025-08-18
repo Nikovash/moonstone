@@ -106,15 +106,24 @@ main() {
   systemctl daemon-reload
   systemctl reset-failed >/dev/null 2>&1 || true
 
-# --- Backup config ---
-  mkdir -p /opt/moonstone/backups
-  if [[ -f "$CONF" ]]; then
-    local BK="/opt/moonstone/backups/${TARGET_USER}-bitoreum.conf"
-    say "Backing up $CONF -> $BK"
-    mv -f "$CONF" "$BK"
+# --- Backup config (copy, not move) ---
+BK_DIR="/opt/moonstone/backups"
+BK_FILE="${BK_DIR}/${TARGET_USER}-bitoreum.conf"
+mkdir -p "$BK_DIR"
+
+if [[ -f "$CONF" ]]; then
+  if cp -a "$CONF" "$BK_FILE"; then
+    say "Backed up $CONF -> $BK_FILE"
+    # Optional: verify non-empty
+    if [[ ! -s "$BK_FILE" ]]; then
+      err "Backup file is empty — aborting uninstall."
+    fi
   else
-    warn "Config not found at $CONF — skipping backup."
+    err "Failed to back up $CONF — aborting uninstall."
   fi
+else
+  warn "Config not found at $CONF — no backup created."
+fi
 
 # --- Terminate all processes for the user to avoid 'user is used by process' ---
   say "Terminating processes for user '$TARGET_USER'..."

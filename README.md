@@ -40,7 +40,9 @@ installing and configuring a Bitoreum smartnode on (Debian/Ubuntu) Linux systems
     user-provided keys and collateral details
 -   Creates and enables a **systemd service** to keep the node alive
 -   Logs successes, info, and failures to `moonstone.log`
--	Tracks username for clean unistall
+-	Update non-critcal conf data `update_conf.sh`
+-	Uninstall capable
+
 
 ---
 

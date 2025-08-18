@@ -455,14 +455,27 @@ fi
 # --- Determine IPs (IPv4 only) ---
 PRIVATE_IP="$(ip -4 -o addr show scope global | awk '{print $4}' | cut -d/ -f1 | head -n1 || true)"
 EXTERNAL_IP="$(curl -4 -fsSL https://api.ipify.org || curl -4 -fsSL https://ifconfig.me || echo "")"
+
 if [[ "$is_oracle" == true ]]; then
   say "Oracle mode: PRIVATE=$PRIVATE_IP, EPHEMERAL=$EXTERNAL_IP"
 else
   say "Non-Oracle: PRIVATE=$PRIVATE_IP, EXTERNAL=$EXTERNAL_IP"
 fi
-[[ -z "$PRIVATE_IP" ]] && read -rp "Enter private IPv4: " PRIVATE_IP
-[[ -z "$EXTERNAL_IP" ]] && read -rp "Enter external/ephemeral IPv4: " EXTERNAL_IP
-_log "[IP  ] private=$PRIVATE_IP external=$EXTERNAL_IP"
+
+[[ -z "$PRIVATE_IP"  ]] && read -rp "Enter private IPv4: " PRIVATE_IP
+[[ -z "$EXTERNAL_IP" ]] && read -rp "Enter external/ephemeral IPv4 (you may include :port): " EXTERNAL_IP
+
+# Ensure externalip includes :15168 unless a port is already present
+ANNOUNCE_PORT=15168
+EXTERNAL_IP="${EXTERNAL_IP//[[:space:]]/}"           # strip whitespace
+if [[ -n "$EXTERNAL_IP" && "$EXTERNAL_IP" != *:* ]]; then
+  EXTERNAL_ANNOUNCE="${EXTERNAL_IP}:${ANNOUNCE_PORT}"
+else
+  EXTERNAL_ANNOUNCE="$EXTERNAL_IP"                   # already has :port (or empty)
+fi
+
+_log "[IP  ] private=$PRIVATE_IP external=$EXTERNAL_ANNOUNCE"
+
 
 # --- Reuse values from existing conf if present ---
 FOUND_RPCPORT=""; FOUND_BLS_PUB=""; FOUND_BLS_PRIV=""
@@ -536,7 +549,7 @@ say "Writing $CONF_PATH ..."
   echo "# Networking (IPv4 only)"
   echo "onlynet=ipv4"
   echo "bind=${PRIVATE_IP}"
-  echo "externalip=${EXTERNAL_IP}"
+  echo "externalip=${EXTERNAL_ANNOUNCE}"
 } > "$CONF_PATH"
 
 # --- Permissions ---
