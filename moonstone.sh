@@ -444,8 +444,6 @@ say "Writing ${CONF_PATH} ..."
   echo "rpcbind=127.0.0.1"
   echo "rpcallowip=127.0.0.1"
   echo "rpcport=${RPC_PORT}"
-  echo "rpcuser=bitoreumrpc"
-  echo "rpcpassword=$(openssl rand -hex 24)"
   echo
   echo "# Smartnode Settings"
   echo "smartnodeblsprivkey=${BLS_PRIV}"
@@ -465,9 +463,9 @@ SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}"
 
 say "Creating systemd service ${SERVICE_PATH} ..."
 cat > "$SERVICE_PATH" <<EOF
-#####################################################
-##     Bitoreum Smartnode Systemd Service Always Alive
-#####################################################
+########################################################
+##     Bitoreum Smartnode Systemd Service Always Alive #
+########################################################
 [Unit]
 Description=Bitoreum Node Daemon
 After=network.target
