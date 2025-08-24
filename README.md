@@ -11,7 +11,7 @@ It also includes tools to **update** non-critical config values (`update_conf.sh
 
 ---
 
-### Features
+## Features
 
 - Ensures the script runs on **Linux only** (exits on macOS/Windows).
 - **Prompts** you to confirm the Bitoreum daemon is stopped before continuing.
@@ -40,7 +40,7 @@ It also includes tools to **update** non-critical config values (`update_conf.sh
 
 ---
 
-### Requirements
+## Requirements
 
 - A Linux VPS (Ubuntu/Debian recommended).
 - Sufficient **RAM/Swap** per the rules above.
@@ -48,7 +48,7 @@ It also includes tools to **update** non-critical config values (`update_conf.sh
 
 ---
 
-### Usage
+## Moonstone.sh Usage
 
 Clone the repository:
 
@@ -81,8 +81,8 @@ sudo systemctl start <username>
 sudo systemctl stop <username>
 ```
 
-#### Updating config (non-critical fields)
-Use `update_conf.sh` to update optional/commented fields in the user’s `bitoreum.conf`:
+### update_conf.sh | Update Non-Critical Data
+Use `update_conf.sh` to update optional (commented out) fields in the user’s `bitoreum.conf`:
 
 ```bash
 ./update_conf.sh
@@ -92,23 +92,56 @@ Use `update_conf.sh` to update optional/commented fields in the user’s `bitore
 ./update_conf.sh <username>
 ```
 
-- Without arguments, it will iterate through the known installed users.
-- With a username, it targets that user directly.
-- The script stops the service, prompts for values (blank = **keep**; `#` = **comment/clear**), and then restarts the service if it was running.
+- Script will safely stop the daemon, allow for edits and tehn restart the daemon
+- Without arguments, it will iterate through the known installed users
+- With a username, it targets that user directly
+- The script stops the service, prompts for values (blank = **keep**; `#` = **comment/clear**), and then restarts the service if it was running
 
-#### Uninstalling
+### update_ip.sh | Update Critical Data
+Use `update_ip.sh` to update the **bind** and **external** IPs in the user's `bitoreum.conf`:
+
+```bash
+./update_ip.sh
+```
+**or**
+```bash
+./update_ip.sh <username>
+```
+
+- Script will safely stop the daemon, allow for edits and tehn restart the daemon
+- Without arguments, it will iterate through the known installed users
+- With a username, it targets that user directly
+- The script stops the service, prompts for values (blank = **keep**), and then restarts the service if it was running
+
+### Uninstalling
 We ship an **uninstaller** that requires an explicit username (this is destructive):
 
 ```bash
 ./uninstall.sh <username>
 ```
 
-- The username must exist in `/opt/moonstone/users`.
+- The username must exist in `/opt/moonstone/users`
 - The user’s `bitoreum.conf` is backed up to:
   ```
   /opt/moonstone/backups/<username>-bitoreum.conf
   ```
-  so you can recover data such as voting address or BLS keys later.
+  so you can recover data such as voting address or BLS keys later
+  
+### safe_view.sh | Stream-Friendly bitoreum.conf Viewer
+Security is paramount when dealing with the `smartnodeblskey` field, but we still wish to be friendly to users making their own contnet 
+without feed of exposing this senstive data, as such we created this little utility that allows you to should the contents of a users `bitoreum.conf` 
+file while obsucring the `smartnodeblskey`:
+
+```bash
+./safe_view.sh
+```
+**or**
+```bash
+./safe_view.sh <username>
+```
+- Without arguments, it will iterate through the known installed users
+- With a username, it targets that user directly
+- This script edits nothign and is just used for display purposes only
 
 ---
 
@@ -158,5 +191,5 @@ Should give you the top three best guesses
 
 ## Disclaimer
 
-This script is provided **as-is**, without warranty. Use at your own risk.  
+These scripts are provided **as-is**, and without warranty. Use at your own risk!  
 Always back up your data and keys before running installation scripts.
