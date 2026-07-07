@@ -5,7 +5,7 @@
 
 <div align="center">
 <h1 align="center">Moonstone</h1>
-  <h2>The Crystal Bitoreum Smartnode Installer Toolkit</h32>
+  <h2>The Crystal Bitoreum Smartnode Installer Toolkit</h2>
   <img src="https://img.shields.io/badge/version-1.0.0-blue">
   <img src="https://img.shields.io/badge/platform-linux-green">
   <img src="https://img.shields.io/badge/license-MIT-purple">
