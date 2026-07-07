@@ -3,8 +3,15 @@
   <img src="assets/script_logo.png" alt="Moonstone Logo" width="200"/>
 </p>
 
+<div align="center">
 <h1 align="center">Moonstone</h1>
-<h3 align="center">The Crystal Bitoreum Smartnode Setup Script</h3>
+  <h2>The Crystal Bitoreum Smartnode Installer Toolkit</h32>
+  <img src="https://img.shields.io/badge/version-1.0.0-blue">
+  <img src="https://img.shields.io/badge/platform-linux-green">
+  <img src="https://img.shields.io/badge/license-MIT-purple">
+  <img src="https://img.shields.io/badge/status-active-success">
+</div>
+<p></p>
 
 This project provides the main **bash script** (`moonstone.sh`) for installing and configuring a Bitoreum smartnode on Debian/Ubuntu Linux systems.  
 It also includes tools to **update** non-critical config values (`update_conf.sh`), tools to **update** the ip(s) (`update_ip.sh`), and to **uninstall** a node cleanly (`uninstall.sh`).
